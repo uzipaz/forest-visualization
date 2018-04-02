@@ -1,0 +1,680 @@
+<html>
+
+<head>
+<title>WebGL</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+</head>
+
+<body>
+	<p id ="DataDownloadStatus">Hello world</p>
+	<input id="frameinput" width="60" type="text" value="frame number" onkeypress="setFrameNumber(event)"/>
+	<p id ="framenumber">Frame#: N/A</p>
+    <canvas id="lesson01-canvas" style="border: none;" width="1000" height="700"></canvas>
+</body>
+
+</html>
+
+<script type="text/javascript" src="./gl-matrix-master/dist/gl-matrix.js"></script>
+<script type="text/javascript" src="./papaparse/papaparse.js"></script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+	
+	varying vec3 color;
+
+    void main(void) {
+        gl_FragColor = vec4(color.x, color.y, color.z, 1.0);
+    }
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+	attribute vec4 InstanceAttribute1;
+	attribute vec4 InstanceAttribute2;
+	
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+	
+	varying vec3 color;
+
+    void main(void) {
+		mat4 InstanceTranslation;
+		mat4 InstanceScale;
+		
+		vec4 temp;
+		
+		InstanceTranslation[0][0] = 1.0; InstanceTranslation[1][0] = 0.0; InstanceTranslation[2][0] = 0.0; InstanceTranslation[3][0] = InstanceAttribute1.x;
+		InstanceTranslation[0][1] = 0.0; InstanceTranslation[1][1] = 1.0; InstanceTranslation[2][1] = 0.0; InstanceTranslation[3][1] = InstanceAttribute1.z;
+		InstanceTranslation[0][2] = 0.0; InstanceTranslation[1][2] = 0.0; InstanceTranslation[2][2] = 1.0; InstanceTranslation[3][2] = InstanceAttribute1.y;
+		InstanceTranslation[0][3] = 0.0; InstanceTranslation[1][3] = 0.0; InstanceTranslation[2][3] = 0.0; InstanceTranslation[3][3] = 1.0;
+		
+		InstanceScale[0][0] = InstanceAttribute1.w; InstanceScale[1][0] = 0.0; InstanceScale[2][0] = 0.0; InstanceScale[3][0] = 0.0;
+		InstanceScale[0][1] = 0.0; InstanceScale[1][1] = InstanceAttribute2.x; InstanceScale[2][1] = 0.0; InstanceScale[3][1] = 0.0;
+		InstanceScale[0][2] = 0.0; InstanceScale[1][2] = 0.0; InstanceScale[2][2] = InstanceAttribute1.w; InstanceScale[3][2] = 0.0;
+		InstanceScale[0][3] = 0.0; InstanceScale[1][3] = 0.0; InstanceScale[2][3] = 0.0; InstanceScale[3][3] = 1.0;
+		
+        gl_Position = uPMatrix * uMVMatrix * InstanceTranslation * InstanceScale * vec4(aVertexPosition, 1.0);
+		color = vec3(InstanceAttribute2.y, InstanceAttribute2.z, InstanceAttribute2.w);
+    }
+</script>
+
+<script type="text/javascript">
+
+    var gl;
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext('webgl2');
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+			console.log("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+
+    function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+			console.log(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+
+    var shaderProgram;
+
+    function initShaders() {
+        var fragmentShader = getShader(gl, "shader-fs");
+        var vertexShader = getShader(gl, "shader-vs");
+
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+			console.log("Could not initialise shaders");
+        }
+
+        gl.useProgram(shaderProgram);
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+		
+		shaderProgram.instanceAttribute1 = gl.getAttribLocation(shaderProgram, "InstanceAttribute1");
+        gl.enableVertexAttribArray(shaderProgram.instanceAttribute1);
+		
+		shaderProgram.instanceAttribute2 = gl.getAttribLocation(shaderProgram, "InstanceAttribute2");
+        gl.enableVertexAttribArray(shaderProgram.instanceAttribute2);
+
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+    }
+
+    var mvMatrix = mat4.create();
+    var pMatrix = mat4.create();
+
+    function setMatrixUniforms() {
+        gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
+        gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+    }
+	
+//-------------------------------------------------------------------------------------------------------------------------------------------
+
+	var SphereVertexBuffer, SphereElementBuffer;
+	var SphereNumOfVertices;
+	
+	function getMidPoint(p1, p2) {
+		return [(p1[0] + p2[0]) * 0.5, (p1[1] + p2[1]) * 0.5, (p1[2] + p2[2]) * 0.5];
+	}
+	
+	function getEuclideanLength(v) {
+		return Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+	}
+	
+	function normalizeToLength(v, Length) {
+		var ThisLength = getEuclideanLength(v);
+		return [v[0] * (Length / ThisLength), v[1] * (Length / ThisLength), v[2] * (Length / ThisLength)];
+	}
+	
+	function generateSphere(DetailLevel, diameter) {
+		var radius = diameter / 2;
+		
+		SphereVertices = [];
+		SphereElementArray = [];
+		
+		SphereVertices.push(0, 0, radius);
+		SphereVertices.push(radius, 0, 0);
+		SphereVertices.push(0, radius, 0);
+		SphereVertices.push(-radius, 0, 0);
+		SphereVertices.push(0, -radius, 0);
+		SphereVertices.push(0, 0, -radius);
+		
+		SphereElementArray.push(0, 1, 2);
+		SphereElementArray.push(0, 2, 3);
+		SphereElementArray.push(0, 3, 4);
+		SphereElementArray.push(0, 4, 1);
+		SphereElementArray.push(5, 2, 1);
+		SphereElementArray.push(5, 3, 2);
+		SphereElementArray.push(5, 4, 3);
+		SphereElementArray.push(5, 1, 4);
+		
+		for (i = 0; i < DetailLevel; i++) {
+			NewSphereElementArray = [];
+			for (j = 0; j < SphereElementArray.length / 3; j++) {
+				//var v1 = SphereVertices[SphereElementArray[j * 3]];
+				//var v2 = SphereVertices[SphereElementArray[j * 3] + 1];
+				//var v3 = SphereVertices[SphereElementArray[j * 3] + 2];
+				
+				var v1 = SphereElementArray[j * 3];
+				var v2 = SphereElementArray[j * 3 + 1];
+				var v3 = SphereElementArray[j * 3 + 2];
+				
+				v12 = normalizeToLength(getMidPoint([SphereVertices[v1 * 3], SphereVertices[v1 * 3 + 1], SphereVertices[v1 * 3 + 2]], [SphereVertices[v2 * 3], SphereVertices[v2 * 3 + 1], SphereVertices[v2 * 3 + 2]]), radius);
+				v23 = normalizeToLength(getMidPoint([SphereVertices[v2 * 3], SphereVertices[v2 * 3 + 1], SphereVertices[v2 * 3 + 2]], [SphereVertices[v3 * 3], SphereVertices[v3 * 3 + 1], SphereVertices[v3 * 3 + 2]]), radius);
+				v31 = normalizeToLength(getMidPoint([SphereVertices[v3 * 3], SphereVertices[v3 * 3 + 1], SphereVertices[v3 * 3 + 2]], [SphereVertices[v1 * 3], SphereVertices[v1 * 3 + 1], SphereVertices[v1 * 3 + 2]]), radius);
+				
+				FinalIndex = SphereVertices.length / 3;
+				
+				SphereVertices = SphereVertices.concat(v12);
+				SphereVertices = SphereVertices.concat(v23);
+				SphereVertices = SphereVertices.concat(v31);
+				
+				var IndexV1 = SphereElementArray[j * 3],
+					IndexV2 = SphereElementArray[j * 3 + 1],
+					IndexV3 = SphereElementArray[j * 3 + 2],
+					IndexV12 = FinalIndex,
+					IndexV23 = FinalIndex + 1,
+					IndexV31 = FinalIndex + 2;
+					
+				NewSphereElementArray.push(IndexV1, IndexV12, IndexV31);
+				NewSphereElementArray.push(IndexV2, IndexV23, IndexV12);
+				NewSphereElementArray.push(IndexV3, IndexV31, IndexV23);
+				NewSphereElementArray.push(IndexV12, IndexV23, IndexV31);
+			}
+			SphereElementArray = NewSphereElementArray;
+		}
+		
+		return [SphereVertices, SphereElementArray];
+	}
+	
+	function initSphereBuffer() {
+		var Results = generateSphere(3, 1);
+		var SphereVertices = Results[0], SphereElementArray = Results[1];
+		SphereNumOfVertices = SphereElementArray.length;
+		
+		SphereVertexBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, SphereVertexBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(SphereVertices), gl.STATIC_DRAW);
+		gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+		
+		SphereElementBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, SphereElementBuffer);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(SphereElementArray), gl.STATIC_DRAW);
+	}
+	
+	var SphereInstanceBuffer1, SphereInstanceBuffer2;
+	var SphereDiameterMultiplier = 1;
+	
+	function initSphereInstances(FrameNumber) {
+		var NumOfInstances = 0;
+		var SphereInstanceAttrib1 = [], SphereInstanceAttrib2 = [];
+		
+		for (i = 0; i < TreeData.length; i++) {
+			if (TreeData[i][2] == FrameNumber)	{
+				SphereInstanceAttrib1.push(TreeData[i][0] * xOffsetFactor, TreeData[i][1] * yOffsetFactor, ((TreeData[i][4] * 0.5) + (TreeData[i][5] * 0.5)) * totalHeightMultiplier, TreeData[i][5] * SphereDiameterMultiplier);
+				var color = [];
+				if (TreeData[i][6] == "FT1") {
+					color = [1.0, 0.0, 0.0];
+				}
+				
+				else if (TreeData[i][6] == "FT2") {
+					color = [0.0, 1.0, 0.0];
+				}
+				
+				else if (TreeData[i][6] == "FT3") {
+					color = [0.0, 0.0, 1.0];
+				}
+				
+				else if (TreeData[i][6] == "FT4") {
+					color = [1.0, 1.0, 0.0];
+				}
+				
+				else if (TreeData[i][6] == "FT5") {
+					color = [0.0, 1.0, 1.0];
+				}
+				
+				else if (TreeData[i][6] == "FT6") {
+					color = [1.0, 0.0, 1.0];
+				}
+				SphereInstanceAttrib2.push(TreeData[i][5] * SphereDiameterMultiplier, color[0], color[1], color[2]);
+				NumOfInstances += 1;
+			}
+		}
+
+		SphereInstanceBuffer1 = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, SphereInstanceBuffer1);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(SphereInstanceAttrib1), gl.STATIC_DRAW);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute1, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute1, 1);
+		
+		SphereInstanceBuffer2 = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, SphereInstanceBuffer2);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(SphereInstanceAttrib2), gl.STATIC_DRAW);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute2, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute2, 1);
+		
+		return NumOfInstances;
+	}
+	
+//-------------------------------------------------------------------------------------------------------------------------------------------
+	
+	var StemVertexBuffer;
+	var StemElementBuffer;
+	
+	function generateCylinder(granularity, diameter, height) {
+		var radius = diameter / 2;
+		
+		var angle = 360 / granularity;
+		
+		CubeVertices = [];
+		CubeElementArray = [];
+		
+		// Generate top cap of cylinder
+		for (i = 0; i < granularity; i++) {
+			x = Math.cos(glMatrix.toRadian(i * angle)) * radius;
+			z = Math.sin(glMatrix.toRadian(i * angle)) * radius;
+			CubeVertices.push(x, 0, z);
+		}
+		
+		// Generate bottom cap of cylinder
+		for (i = 0; i < granularity; i++) {
+			CubeVertices.push(CubeVertices[i * 3], height, CubeVertices[i * 3 + 2]);
+		}
+		
+		CubeVertices.push(0, 0, 0);
+		CubeVertices.push(0, height, 0);
+		
+		// Link element array of both caps
+		for (i = 0; i < granularity - 1; i++) {
+			CubeElementArray.push(i, i + 1, granularity * 2);
+			CubeElementArray.push(granularity, granularity + 1, granularity * 2 + 1);
+		}
+		
+		CubeElementArray.push(0, granularity - 1, granularity * 2);
+		CubeElementArray.push(granularity, granularity * 2 - 1, granularity * 2 + 1);
+		
+		// Link element array of the body
+		for (i = 0; i < granularity - 1; i++) {
+			CubeElementArray.push(i, i + granularity, i + granularity + 1);
+			CubeElementArray.push(i + granularity + 1, i + 1, i);
+		}
+		
+		CubeElementArray.push(0, granularity, granularity - 1);
+		CubeElementArray.push(granularity - 1, granularity * 2 - 1, granularity);
+		
+		return [CubeVertices, CubeElementArray];
+	}
+	
+	var CubeNumOfVertices;
+	
+	function initStemBuffer() {
+		var Results = generateCylinder(10, 0.25, 1);
+		var CubeVertices = Results[0], CubeElementArray = Results[1];
+		CubeNumOfVertices = CubeElementArray.length;
+		
+		StemVertexBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, StemVertexBuffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(CubeVertices), gl.STATIC_DRAW);
+		gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+		
+		StemElementBuffer = gl.createBuffer();
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, StemElementBuffer);
+		gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(CubeElementArray), gl.STATIC_DRAW);
+	}
+	
+	var StemInstanceBuffer1, StemInstanceBuffer2;
+	var xOffsetFactor = 200, yOffsetFactor = 200, cylinderDiameterMultiplier = 1, totalHeightMultiplier = 1;
+	var StemColor = [139.0/255.0, 69.0/255.0, 19.0/255.0]; // Saddle Brown
+	
+	function initStemInstances(FrameNumber) {
+		var NumOfInstances = 0;
+		var StemInstanceAttrib1 = [], StemInstanceAttrib2 = [];
+		
+		for (i = 0; i < TreeData.length; i++) {
+			if (TreeData[i][2] == FrameNumber)	{
+				StemInstanceAttrib1.push(TreeData[i][0] * xOffsetFactor, TreeData[i][1] * yOffsetFactor, 0.0, TreeData[i][3] * cylinderDiameterMultiplier);	
+				StemInstanceAttrib2.push((TreeData[i][4] * 0.5) * totalHeightMultiplier, StemColor[0], StemColor[1], StemColor[2]);
+				NumOfInstances += 1;
+			}
+		}
+
+		StemInstanceBuffer1 = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, StemInstanceBuffer1);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(StemInstanceAttrib1), gl.STATIC_DRAW);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute1, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute1, 1);
+		
+		StemInstanceBuffer2 = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, StemInstanceBuffer2);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(StemInstanceAttrib2), gl.STATIC_DRAW);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute2, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute2, 1);
+		
+		return NumOfInstances;
+	}
+	
+//-------------------------------------------------------------------------------------------------------------------------------------------
+	
+	var eyeX = 		50.0, eyeY = 	100.0, eyeZ = 	50.0;
+	var centerX = 	110.9596136731782, centerY = 	37.673775258381866, centerZ = 	119.99547992745084;
+	var centerInitX = centerX, centerInitY = centerY, centerInitZ = centerZ; 
+	var upX = 		0.0, upY = 		1.0, upZ = 		0.0;
+	var EyeToCenterDistance;
+	
+	var RotationAngleInc = 0.1;
+	var RotationAngle = 0.0;
+
+    function drawScene(timestamp) {
+		var time = performance.now(); 
+		gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+		mat4.perspective(pMatrix, glMatrix.toRadian(60), gl.viewportWidth / gl.viewportHeight, 0.1, 1000.0);
+		
+		mat4.identity(mvMatrix);
+		
+		eyeVec = [eyeX, eyeY, eyeZ];
+		//vec3.rotateY(eyeVec, eyeVec, [0.0, 0.0, 0.0], glMatrix.toRadian(RotationAngle));
+		//RotationAngle += RotationAngleInc;
+		
+		//if (RotationAngle > 360.0)
+		//	RotationAngle -= 360.0;
+		
+		mat4.lookAt(mvMatrix, eyeVec, [centerX, centerY, centerZ], [upX, upY, upZ]);
+		
+		document.getElementById("framenumber").innerHTML = "Frame#: " + FrameNumber;
+		
+		var NumOfInstances = initStemInstances(FrameNumber);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, StemInstanceBuffer1);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute1, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute1, 1);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, StemInstanceBuffer2);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute2, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute2, 1);
+		
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, StemElementBuffer);
+		gl.bindBuffer(gl.ARRAY_BUFFER, StemVertexBuffer);
+		gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+		
+		setMatrixUniforms();
+		gl.drawElementsInstanced(gl.TRIANGLES, CubeNumOfVertices, gl.UNSIGNED_SHORT, 0, NumOfInstances);
+		
+		var NumOfInstances = initSphereInstances(FrameNumber);
+		//console.log("Instances: " + NumOfInstances);
+		gl.bindBuffer(gl.ARRAY_BUFFER, SphereInstanceBuffer1);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute1, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute1, 1);
+		
+		gl.bindBuffer(gl.ARRAY_BUFFER, SphereInstanceBuffer2);
+		gl.vertexAttribPointer(shaderProgram.instanceAttribute2, 4, gl.FLOAT, false, 0, 0);
+		gl.vertexAttribDivisor(shaderProgram.instanceAttribute2, 1);
+		
+		gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, SphereElementBuffer);
+		gl.bindBuffer(gl.ARRAY_BUFFER, SphereVertexBuffer);
+		gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, 3, gl.FLOAT, false, 0, 0);
+		
+		setMatrixUniforms();
+		
+		gl.drawElementsInstanced(gl.TRIANGLES, SphereNumOfVertices, gl.UNSIGNED_SHORT, 0, NumOfInstances);
+		
+		if (debug == true) {
+			if (debugCounter < debugFramesPerDataFrame) {
+				var rendertime = performance.now() - time;
+				//console.log(debugCounter + " " + rendertime);
+				RenderTimeSum += rendertime;
+				debugCounter += 1;
+			}
+			
+			else {
+				AverageRenderTime = RenderTimeSum / debugFramesPerDataFrame;
+				debugData += FrameNumber + " " + (1000 / AverageRenderTime).toFixed(4) + "\n";
+				
+				debugCounter = 0;
+				RenderTimeSum = 0.0;
+				if (FrameNumber < MaxFrameNumber) {
+					FrameNumber += 1;
+				}
+					
+				else {
+					WriteDebugInfo();
+					debug = false;
+				}
+			}
+			
+			window.requestAnimationFrame(drawScene);
+		}
+		
+		else {
+			var runtime = performance.now() - starttime;
+			if (runtime > FrameInterval) {
+				FrameNumber += 1;
+				if (Frameloop == true) {
+					FrameNumber = (FrameNumber + MinFrameNumber) % (MaxFrameNumber + MinFrameNumber);
+				}
+				starttime = timestamp;
+			}
+			
+			window.requestAnimationFrame(function(timestamp) {
+					//starttime = timestamp;
+					drawScene(timestamp);
+				}
+			);
+		}
+    }
+	
+	var debug = true, debugCounter = 0, debugData = '';
+	var fps = 60, FrameInterval = 1000/fps, debugFramesPerDataFrame = 20, RenderTimeSum = 0.0;
+	var TreeData;
+	var FrameNumber, MaxFrameNumber, MinFrameNumber, Frameloop = true;
+	var starttime;
+	
+	function initProgram() {
+		var csvfile;
+		var DataDownloadSize = 0;
+		
+		var Req = new XMLHttpRequest();
+		Req.onreadystatechange = function () {
+			if (this.readyState == 4 && this.status == 200) {
+				csvfile = Req.responseText;
+				
+				document.getElementById("DataDownloadStatus").innerHTML = "Data Download Finished!";
+				
+				Papa.parse(csvfile, {
+					header: true,
+					dynamicTyping: true,
+					complete: function(results) {
+					TreeData = [];
+					for (i = 0; i < results.data.length; i++) {
+						TreeData[i] = [results.data[i]["x"], results.data[i]["y"], results.data[i]["frame"], results.data[i]["cylinder_diameter"], results.data[i]["total_height"], results.data[i]["sphere_diameter"], results.data[i]["tree_type"]];
+					}
+				
+					webGLStart();
+					}
+				});
+			}
+			
+			else if (this.readyState == this.HEADERS_RECEIVED) {
+				var downloadsize = Req.getResponseHeader("Content-Length");
+				if (downloadsize != null) {
+					DataDownloadSize = Number(downloadsize) / 1048576.0; // Conversion to MB
+				}
+				
+				document.getElementById("DataDownloadStatus").innerHTML = "Beginning data file download!";
+			}
+			
+			else if (this.readyState == this.LOADING) {
+				var ResponseLength = (Req.responseText).length / 1048576.0; // Conversion to MB
+				
+				document.getElementById("DataDownloadStatus").innerHTML = "Data Download: " + ((ResponseLength / DataDownloadSize) * 100).toFixed(2) + "% of " + DataDownloadSize.toFixed(2) + " MB";
+			}
+			
+			else if (this.readyState == 4 && this.status == 0) {
+				document.getElementById("DataDownloadStatus").innerHTML = "Failed to Download Data File!!!";
+			}
+		};
+		
+		Req.open("GET", "http://www.cs.mun.ca/~mos283/tree_model_output_edt.csv");
+		Req.send();
+	}
+	
+	function WriteDebugInfo() {
+		var formData = new FormData();
+		formData.append("data", debugData);
+		
+		var request = new XMLHttpRequest();
+		
+		request.onreadystatechange = function () {
+			if (this.readyState == 4 && this.status == 200) {
+				console.log("Debug benchmark info sent to server!");
+			}
+		};
+		
+		request.open("POST", "http://www.cs.mun.ca/~mos283/upload.php");
+		//request.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+		request.send(formData);
+	}
+	
+	var MouseX, MouseY;
+	var MouseXSensitivity = 0.1;
+	var MouseYSensitivity = 0.1;
+	var isMouseDown = false;
+	
+	function MouseDown(event) {
+		MouseX = event.clientX;
+		MouseY = event.clientY;
+		isMouseDown = true;
+	}
+	
+	function MouseUp(event) {
+		isMouseDown = false;
+		centerInitX = centerX;
+		centerInitY = centerY;
+		centerInitZ = centerZ;
+	}
+	
+	function MouseMove(event) {
+		if (isMouseDown) {
+			DifferenceX = event.clientX - MouseX;
+			DifferenceY = event.clientY - MouseY;
+			
+			centerVec = [centerInitX, centerInitY, centerInitZ];
+			vec3.rotateY(centerVec, centerVec, [eyeX, eyeY, eyeZ], glMatrix.toRadian(DifferenceX * MouseXSensitivity));
+			vec3.rotateZ(centerVec, centerVec, [eyeX, eyeY, eyeZ], glMatrix.toRadian(DifferenceY * MouseYSensitivity));
+			
+			centerX = centerVec[0];
+			centerY = centerVec[1];
+			centerZ = centerVec[2];
+			//console.log(VecX);
+			
+			//MouseX = event.clientX;
+			//MouseY = event.clientY;
+			
+			//console.log(centerX + " " + centerY + " " + centerZ);
+		}
+	}
+	
+	function setFrameNumber (event) {
+		if (event.keyCode == 13) {
+			var inp = document.getElementById("frameinput").value;
+			var val = parseInt(inp, 10);
+			
+			if (val == -1) {
+				Frameloop = true;
+				FrameNumber = 0;
+			}
+			
+			else if (val != NaN) {
+				if (val >= MinFrameNumber && val <= MaxFrameNumber) {
+					FrameNumber = val;
+					Frameloop = false;
+				}
+			}
+		}
+	}
+
+    function webGLStart() {
+        var canvas = document.getElementById("lesson01-canvas");
+		
+		canvas.addEventListener("mousedown", MouseDown);
+		canvas.addEventListener("mouseup", MouseUp);
+		canvas.addEventListener("mousemove", MouseMove);
+		
+        initGL(canvas);
+        initShaders();
+		
+		initSphereBuffer();
+		initStemBuffer();
+		
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+		gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.enable(gl.DEPTH_TEST);
+		
+		FrameNumber = 0;
+		MaxFrameNumber = TreeData[0][2];
+		MinFrameNumber = TreeData[0][2];
+		
+		// Find the minimum and the maximum frame number in the tree data set
+		for (i = 1; i < TreeData.length; i++) {
+			if (MaxFrameNumber < TreeData[i][2])
+				MaxFrameNumber = TreeData[i][2];
+				
+			else if (MinFrameNumber > TreeData[i][2])
+				MinFrameNumber = TreeData[i][2];
+		}
+		
+		EyeToCenterDistance = Math.sqrt(Math.pow(eyeX - centerX, 2) + Math.pow(eyeZ - centerZ, 2));
+		
+		// Draw each TreeData Frame for each 3D fram
+		window.requestAnimationFrame(function(timestamp) {
+			starttime = timestamp;
+			drawScene(timestamp);
+		});
+    }
+	
+initProgram();
+
+</script>

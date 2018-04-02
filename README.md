@@ -1,6 +1,6 @@
 # forest-visualization
 
-We are given thousands or more data points that we wish to visualize with 3D objects in each frame and we are required to optimize the rendering performance as much as possible. We can achieve this by using GPU supported instanced rendering that improves performance.
+In this [app](http://www.cs.mun.ca/~mos283/page.html), we are given thousands or more data points that we wish to visualize with 3D objects in each frame and we are required to optimize the rendering performance as much as possible. We can achieve this by using GPU supported instanced rendering that improves performance.
 
 In our dataset, each row contains characteristics and a position that represents a tree in a forest. There are just over one thousands of trees in a single time frame, as we go along the axis of time in our dataset, the characteristics of the trees changes. These changes represents the lifetime or trees in a forest. Graphically visualizing this data can help us easily spot abnormalities, any unusual characteristics or just study a group of trees in the forest. 
 
